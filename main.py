@@ -2,7 +2,7 @@ import os
 import time
 import numpy as np
 import pandas as pd
-from math import log, sqrt, pi, radians
+from math import sqrt, pi, radians
 from Bio.PDB import PDBParser, PDBIO, NeighborSearch, Selection
 from Bio.PDB.SASA import ShrakeRupley
 from Bio.PDB.Chain import Chain
@@ -130,20 +130,24 @@ def calculate_roughness_by_patch(patch):
     for radius in radii:
         sr = ShrakeRupley(probe_radius=radius)
         sr.compute(patch_chain, level="R")
-        area = sum([residue.sasa for residue in residues])
+        area = sum(residue.sasa for residue in residues)
         surface_areas.append(area)
 
-    # calculate the roughness of patch
+    # calculate the slope of the log of surface area vs. radius
     roughness = 0
-    num_approximations = len(radii) - 1
-    for i in range(num_approximations):
+    num_radii = len(radii) - 1
+    for i in range(num_radii):
         log_area1 = np.log(surface_areas[i])
         log_area2 = np.log(surface_areas[i + 1])
         log_radius1 = np.log(radii[i])
         log_radius2 = np.log(radii[i + 1])
         diff = (log_area2 - log_area1) / (log_radius2 - log_radius1)
         roughness += diff
-    roughness /= num_approximations
+
+    # get mean roughness
+    roughness /= num_radii
+
+    # normalize roughness
     roughness = 2 - roughness
     return roughness
 
@@ -152,55 +156,94 @@ def calculate_planarity_by_patch(patch):
     # get the coordinates of the atoms in patch
     coords = []
     for residue in patch:
-        for atom in residue:
-            if atom.element != "H":
-                coords.append(atom.coord)
+        coords.extend(atom.coord for atom in residue if atom.element != "H")
     coords = np.array(coords)
 
-    # Center the coordinates by subtracting the mean
+    # center the coordinates by subtracting the mean
     coords = coords - coords.mean(axis=0)
 
-    # Calculate the singular value decomposition of the centered coordinates
+    # calculate the singular value decomposition of the centered coordinates
     u, s, v = np.linalg.svd(coords)
 
-    # The third principal component is the normal vector to the plane of best fit (defined by the first & second PCs)
+    # the third principal component is the normal vector to the plane of best fit (defined by the first & second PCs)
     normal = v[2]
 
-    # Calculate the distance of each point from the plane
+    # calculate the distance of each point from the plane
     distances = np.abs(np.dot(coords, normal))
 
-    # Calculate the root mean squared distance & return planarity (higher = flatter)
+    # calculate the root mean squared distance & return planarity (higher = flatter)
     rmsd = sqrt(np.mean(distances ** 2))
     return 1 / rmsd
+
+
+def calculate_asa_by_patch(domain):
+    # Calculate mean ASA for the domain
+    asa_sum = 0
+    n_atom = 0
+    domain_atoms = get_domain_atoms(domain)
+    for atom in domain_atoms:
+        asa_sum += atom.sasa
+        n_atom += 1
+    return asa_sum / n_atom
+
+
+def calculate_hydrophobicity_by_patch(patch):
+    hydrophobicity_sum = 0
+    n_atom = 0
+    chain_id = patch[0].get_parent().id
+    for residue in patch:
+        res_index = surface_residues.index(residue)
+        hydrophobicity_sum += res_hydrophobicity[res_index]
+        n_atom += 1
+    return hydrophobicity_sum / n_atom
+
+
+# Calculate the mean cx value for a given domain
+def calculate_cx_by_domain(domain):
+    cx_sum = 0
+    n_atom = 0
+    domain_atoms = get_domain_atoms(domain)
+    for atom in domain_atoms:
+        if atom.element != "H":
+            cx_sum += atom.get_bfactor()
+            n_atom += 1
+    return cx_sum / n_atom
+
+
+# Check if domain is a patch, get domain atoms
+def get_domain_atoms(domain):
+    if not isinstance(domain, list):
+        return domain.get_atoms()
+    domain_atoms = []
+    for residue in domain:
+        domain_atoms.extend(iter(residue.get_list()))
+    return domain_atoms
 
 
 # get the solvent vector of a residue
 def get_sv(residue, chain):
     # Get the central residue's location
-    cr = residue["CA"]
+    cr = residue["CA"].coord
 
     # Find the 10 nearest neighbors of the central residue
     ns = NeighborSearch(list(chain.get_atoms()))
-    near = ns.search(cr.coord, 10, level="A")  # radius = 10 Angstroms
+    near = ns.search(cr, 10, level="A")  # radius = 10 Angstroms
     near = [atom for atom in near if atom.id == "CA" and atom.get_parent() != residue]  # only get CA atoms of residues
     near.sort(key=lambda a: a - cr)  # sort near atoms by distance from central residue
     nn = near[:10]  # get the nearest 10
 
-    # Find the center of gravity of the neighbors
-    cg_x = sum([a.coord[0] * a.mass for a in nn]) / sum([a.mass for a in nn])
-    cg_y = sum([a.coord[1] * a.mass for a in nn]) / sum([a.mass for a in nn])
-    cg_z = sum([a.coord[2] * a.mass for a in nn]) / sum([a.mass for a in nn])
-
-    # Calculate the positions of the center of gravity and the central residue
+    # find the center of geometry of the neighbors
+    cg_x = sum(a.coord[0] * a.mass for a in nn) / sum(a.mass for a in nn)
+    cg_y = sum(a.coord[1] * a.mass for a in nn) / sum(a.mass for a in nn)
+    cg_z = sum(a.coord[2] * a.mass for a in nn) / sum(a.mass for a in nn)
     cg = Vector(cg_x, cg_y, cg_z)
-    cr = Vector(cr.coord)
+    cr = Vector(cr)
 
-    # Vector from the central residue to the center of gravity
+    # Vector from the central residue to the center of geometry
     vi = cr - cg
 
     # Solvent vector (vs) is the inverse of vi
-    vs = -vi
-    return vs
+    return -vi
 
 
 # Check if two residues are surface neighbors
@@ -215,70 +258,6 @@ def check_neighbor(r1, r2, chain, radius):
         if sv1.angle(sv2) < radians(110):
             return True
     return False
-
-
-def calculate_asa_by_patch(domain):
-    # Calculate mean ASA for the domain
-    asa_sum = 0
-    n_atom = 0
-    domain_atoms = get_domain_atoms(domain)
-    for atom in domain_atoms:
-        asa_sum += atom.sasa
-        n_atom += 1
-    asa_mean = asa_sum / n_atom
-    return asa_mean
-
-
-# Calculate the mean cx value for a given domain
-def calculate_cx_by_domain(domain):
-    cx_sum = 0
-    n_atom = 0
-    domain_atoms = get_domain_atoms(domain)
-    for atom in domain_atoms:
-        if atom.element != "H":
-            cx_sum += atom.get_bfactor()
-            n_atom += 1
-    cx_mean = cx_sum / n_atom
-    return cx_mean
-
-
-def calculate_hydrophobicity_by_patch(patch):
-    hydrophobicity_sum = 0
-    n_atom = 0
-    chain_id = patch[0].get_parent().id
-    for residue in patch:
-        res_index = surface_residues.index(residue)
-        hydrophobicity_sum += res_hydrophobicity[res_index]
-        n_atom += 1
-    hydrophobicity_mean = hydrophobicity_sum / n_atom
-    return hydrophobicity_mean
-
-
-# Check if domain is a patch, get domain atoms
-def get_domain_atoms(domain):
-    if isinstance(domain, list):
-        domain_atoms = []
-        for residue in domain:
-            for atom in residue.get_list():
-                domain_atoms.append(atom)
-        return domain_atoms
-    else:
-        return domain.get_atoms()
-
-
-# Check if domain is a patch, get domain residues
-def get_domain_residues(domain):
-    if isinstance(domain, list):
-        return domain
-    else:
-        return domain.get_residues()
-
-
-# Categorize patches of a given structure
-def categorize_patches(structure):
-    # Get patches from surface & interface residues by chain
-    get_patches_from_residues(surface_residues_by_chain, "Surface")
-    get_patches_from_residues(interface_residues_by_chain, "Interface")
 
 
 def get_patches_from_residues(residues_by_chain, patch_type):
@@ -318,6 +297,13 @@ def get_patches_from_residues(residues_by_chain, patch_type):
             patch_index += 1
         patch_index = 1
     return res_patches
+
+
+# Categorize patches of a given structure
+def categorize_patches(structure):
+    # Get patches from surface & interface residues by chain
+    get_patches_from_residues(surface_residues_by_chain, "Surface")
+    get_patches_from_residues(interface_residues_by_chain, "Interface")
 
 
 def res_to_df():
@@ -383,10 +369,7 @@ def categorize_residues(structure):
         # get ASA before complexation
         sr = ShrakeRupley()
         sr.compute(chain, level="R")
-        asa_before_by_chain[chain_id] = []
-        for residue in chain.get_residues():
-            asa_before_by_chain[chain_id].append(residue.sasa)
-
+        asa_before_by_chain[chain_id] = [residue.sasa for residue in chain.get_residues()]
         chain_res = list(chain.get_residues())
         for i in range(len(chain_res)):
             residue = chain_res[i]
@@ -479,22 +462,22 @@ def get_protein_from_pdb(pdb_file):
 
 def clear_global_variables():
     global surface_residues, res_chains, res_nums, res_types, res_cx, res_rasa, res_surface, res_hydrophobicity
-    global all_patches, surface_patches, interface_patches, patch_chains, patch_nums, patch_types, patch_cx, patch_asa, patch_hydrophobicity, patch_planarity
+    global all_patches, surface_patches, interface_patches, patch_chains, patch_nums, patch_types, patch_cx, patch_asa, patch_hydrophobicity, patch_planarity, patch_roughness
     surface_residues, res_chains, res_nums, res_types, res_cx, res_rasa, res_surface, res_hydrophobicity = [], [], [], [], [], [], [], []
-    all_patches, surface_patches, interface_patches, patch_chains, patch_nums, patch_types, patch_cx, patch_asa, patch_hydrophobicity, patch_planarity = [], [], [], [], [], [], [], [], [], []
+    all_patches, surface_patches, interface_patches, patch_chains, patch_nums, patch_types, patch_cx, patch_asa, patch_hydrophobicity, patch_planarity, patch_roughness = [], [], [], [], [], [], [], [], [], [], []
     global surface_residues_by_chain, interface_residues_by_chain
     surface_residues_by_chain, interface_residues_by_chain = {}, {}
 
 
 def get_all_bfactors(structure):
-    bfactors = []
-    for atom in structure.get_atoms():
-        if atom.element != "H":
-            bfactors.append(atom.get_bfactor())
-    return bfactors
+    return [
+        atom.get_bfactor()
+        for atom in structure.get_atoms()
+        if atom.element != "H"
+    ]
 
 
-def main():
+def main():  # sourcery skip: sum-comprehension
     for file in os.listdir("in"):
         if file.endswith(".pdb"):
             # get pdb file
@@ -556,10 +539,7 @@ def main():
 
             # print the total number of residues in structure and residues in patches
             print(f"#surface residues in structure: {len(surface_residues)}")
-            # get the total number of residues in each patch in patches
-            res = 0
-            for patch in surface_patches:
-                res += len(patch)
+            res = sum(len(patch) for patch in surface_patches)
             print(f"#residues in surface patches: {res}")
 
             # compare old and new b-factors
