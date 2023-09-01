@@ -223,23 +223,31 @@ def get_domain_atoms(domain):
 # get the solvent vector of a residue
 def get_sv(residue, chain):
     # Get the central residue's location
-    cr = residue["CA"].coord
+    cr = residue["CA"]
+    cr_coord = cr.coord
 
     # Find the 10 nearest neighbors of the central residue
     ns = NeighborSearch(list(chain.get_atoms()))
-    near = ns.search(cr, 10, level="A")  # radius = 10 Angstroms
+    near = ns.search(cr_coord, 10, level="A")  # radius = 10 Angstroms
     near = [atom for atom in near if atom.id == "CA" and atom.get_parent() != residue]  # only get CA atoms of residues
     near.sort(key=lambda a: a - cr)  # sort near atoms by distance from central residue
     nn = near[:10]  # get the nearest 10
 
     # find the center of geometry of the neighbors
-    cg_x = sum(a.coord[0] * a.mass for a in nn) / sum(a.mass for a in nn)
-    cg_y = sum(a.coord[1] * a.mass for a in nn) / sum(a.mass for a in nn)
-    cg_z = sum(a.coord[2] * a.mass for a in nn) / sum(a.mass for a in nn)
+    cg_x, cg_y, cg_z = 0, 0, 0
+    for atom in nn:
+        x, y, z = atom.coord
+        cg_x += x
+        cg_y += y
+        cg_z += z
+    cg_x /= 10
+    cg_y /= 10
+    cg_z /= 10
     cg = Vector(cg_x, cg_y, cg_z)
-    cr = Vector(cr)
 
-    # Vector from the central residue to the center of geometry
+    cr = Vector(cr_coord)
+
+    # get the vector from the central residue to the center of geometry
     vi = cr - cg
 
     # Solvent vector (vs) is the inverse of vi
@@ -252,31 +260,31 @@ def check_neighbor(r1, r2, chain, radius):
     ca2 = r2["CA"]
     distance = ca1 - ca2
     if distance < radius:
+        # get the solvent vectors of the residues & calculate the angle between them
         sv1 = get_sv(r1, chain)
         sv2 = get_sv(r2, chain)
-        # Check if the angle between the solvent vectors is less than 110 degrees
-        if sv1.angle(sv2) < radians(110):
-            return True
+        solvent_angle = sv1.angle(sv2)
+
+        # return true if the angle between the solvent vectors is less than 110 degrees
+        return solvent_angle < radians(110)
     return False
 
 
 def get_patches_from_residues(residues_by_chain, patch_type):
     sr = ShrakeRupley()
-    res_patches = {}
     patch_index = 1
     for chain in residues_by_chain:
         # calculate ASA before complexation
         sr.compute(chain, level="R")
         chain_id = chain.id
-        res_patches[chain] = []
         potential_neighbors = residues_by_chain[chain]
         for i in range(0, len(potential_neighbors), 3):
+            # add residues to this patch
             this_res = potential_neighbors[i]
             this_patch = [this_res]
             for other in potential_neighbors:
                 if other != this_res and check_neighbor(this_res, other, chain, patch_radius):
                     this_patch.append(other)
-            res_patches[chain].append(this_patch)
 
             # set global patch info
             if patch_type == "Surface":
@@ -291,12 +299,10 @@ def get_patches_from_residues(residues_by_chain, patch_type):
             patch_asa.append(calculate_asa_by_patch(this_patch))
             patch_hydrophobicity.append(calculate_hydrophobicity_by_patch(this_patch))
             patch_planarity.append(calculate_planarity_by_patch(this_patch))
-            this_patch_roughness = calculate_roughness_by_patch(this_patch)
-            patch_roughness.append(this_patch_roughness)
+            patch_roughness.append(calculate_roughness_by_patch(this_patch))
 
             patch_index += 1
         patch_index = 1
-    return res_patches
 
 
 # Categorize patches of a given structure
@@ -372,6 +378,7 @@ def categorize_residues(structure):
         asa_before_by_chain[chain_id] = [residue.sasa for residue in chain.get_residues()]
         chain_res = list(chain.get_residues())
         for i in range(len(chain_res)):
+            # get residue info
             residue = chain_res[i]
             residue_num = residue.get_full_id()[3][1]
             residue_type = residue.get_resname()
@@ -381,6 +388,7 @@ def categorize_residues(structure):
 
             # get surface residues
             residue_surface = residue_rasa >= 0.25
+
             # set global residue info if surface residue
             surface_residues.append(residue)
             surface_residues_by_chain[chain].append(residue)
@@ -470,11 +478,11 @@ def clear_global_variables():
 
 
 def get_all_bfactors(structure):
-    return [
-        atom.get_bfactor()
-        for atom in structure.get_atoms()
-        if atom.element != "H"
-    ]
+    bfactors = []
+    for atom in structure.get_atoms():
+        if atom.element != "H":
+            bfactors.append(atom.get_bfactor())
+    return bfactors
 
 
 def main():  # sourcery skip: sum-comprehension
@@ -504,11 +512,11 @@ def main():  # sourcery skip: sum-comprehension
             # start timer
             start_time = time.time()
 
-            # categorize residues as surface & interface, remove internal residues
-            categorize_residues(structure)
-
             # set cx as b-factor & save structure to pdb
             save_structure_to_pdb(set_cx_as_bfactor(structure), out_dir, f"{protein_id}_cx")
+
+            # categorize residues as surface, interface & non-surface
+            categorize_residues(structure)
 
             # categorize patches as interface & surface
             categorize_patches(structure)
@@ -518,14 +526,12 @@ def main():  # sourcery skip: sum-comprehension
 
             bfactors_old = get_all_bfactors(structure)
 
-            # set hydrophobicities of patches as b-factor & save structure to pdb
+            # set hydrophobicity, planarity & roughness values of patches as b-factor & save structure to pdb
             save_structure_to_pdb(set_hydrophobicity_as_bfactor(structure), out_dir, f"{protein_id}_hydrophobicity")
-
-            bfactors_new = get_all_bfactors(structure)
-
-            # set planarity & roughness values of patches as b-factor & save structure to pdb
             save_structure_to_pdb(set_as_bfactor(structure, patch_planarity), out_dir, f"{protein_id}_planarity")
             save_structure_to_pdb(set_as_bfactor(structure, patch_roughness), out_dir, f"{protein_id}_roughness")
+
+            bfactors_new = get_all_bfactors(structure)
 
             # save global residue info to csv
             res_to_df().to_csv(f"{out_dir}/{protein_id}_residues.csv", index=False)
@@ -549,7 +555,7 @@ def main():  # sourcery skip: sum-comprehension
                     same += 1
             print(f"atoms not present in patches: {same}\n")
 
-            # clear global variables for next iteration
+            # clear global variables for the next structure
             clear_global_variables()
 
 
