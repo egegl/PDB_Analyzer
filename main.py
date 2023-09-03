@@ -2,8 +2,11 @@ import os
 import time
 import numpy as np
 import pandas as pd
-from math import sqrt, pi, radians
-from Bio.PDB import PDBParser, PDBIO, NeighborSearch, Selection
+from math import sqrt, pi, radians, log
+from numpy import mean
+import matplotlib.pyplot as plt
+from sklearn.decomposition import PCA
+from Bio.PDB import PDBParser, PDBIO, NeighborSearch
 from Bio.PDB.SASA import ShrakeRupley
 from Bio.PDB.Chain import Chain
 from Bio.PDB.vectors import Vector
@@ -16,12 +19,14 @@ v_sphere = (4 / 3) * pi * cx_radius ** 3  # Angstrom^3
 
 # roughness constants
 r_min_radius = 0.2  # Angstrom
-r_radius_step = 0.1  # Angstrom
+r_radius_step = 0.95  # Angstrom
 r_max_radius = 4.0 + r_radius_step  # Angstrom
 radii = np.arange(r_min_radius, r_max_radius, r_radius_step)
+num_radii = len(radii)
 
 # patch constants
 patch_radius = 9  # Angstrom
+central_residue_step = 3
 
 # structure constants
 next_chain_id = 'A'
@@ -92,63 +97,51 @@ standard_volumes_of_atoms = {  # Angstrom^3
 
 # global lists by patch
 all_patches = []
-surface_patches = []
-interface_patches = []
-patch_chains = []
-patch_nums = []
-patch_types = []
-patch_cx = []
-patch_asa = []
-patch_hydrophobicity = []
-patch_planarity = []
-patch_roughness = []
+surface_patches_by_chain = {}
+surface_patches_residues_by_chain = {}
+interface_patches_by_chain = {}
+interface_patches_residues_by_chain = {}
 
 # global lists by residue
-surface_residues = []
+all_residues = []
 surface_residues_by_chain = {}
-interface_residues = []
 interface_residues_by_chain = {}
-res_chains = []
-res_nums = []
-res_types = []
-res_cx = []
-res_rasa = []
-res_surface = []
-res_hydrophobicity = []
+interior_residues_by_chain = {}
 
 
-def calculate_roughness_by_patch(patch):
-    surface_areas = []
-    residues = Selection.unfold_entities(patch, 'R')
-
+def calculate_roughness_by_patch(patch, patch_type):
     # create dummy chain object with only the patch residues
     patch_chain = Chain(next_chain_id)
     for residue in patch:
-        patch_chain.add(residue)
+        patch_chain.add(residue.residue)
 
     # calculate the surface area of patch for each radius (0.2-4.0 Angstrom)
+    surface_areas = []
     for radius in radii:
         sr = ShrakeRupley(probe_radius=radius)
-        sr.compute(patch_chain, level="R")
-        area = sum(residue.sasa for residue in residues)
+        sr.compute(patch_chain, level='R')
+        area = sum(residue.sasa for residue in patch_chain.get_residues())
         surface_areas.append(area)
 
-    # calculate the slope of the log of surface area vs. radius
-    roughness = 0
-    num_radii = len(radii) - 1
-    for i in range(num_radii):
-        log_area1 = np.log(surface_areas[i])
-        log_area2 = np.log(surface_areas[i + 1])
-        log_radius1 = np.log(radii[i])
-        log_radius2 = np.log(radii[i + 1])
-        diff = (log_area2 - log_area1) / (log_radius2 - log_radius1)
-        roughness += diff
+    # delete the dummy chain
+    del patch_chain
 
-    # get mean roughness
-    roughness /= num_radii
+    # calculate the log of surface areas and radii
+    log_radii = [log(radius) for radius in radii]  # x-values
+    log_surface_areas = [log(area) for area in surface_areas]  # y-values
 
-    # normalize roughness
-    roughness = 2 - roughness
+    '''
+    # plot the log of surface areas vs the log of radii
+    if patch_type == "Surface":
+        plt.plot(log_radii, log_surface_areas, color="blue")
+    elif patch_type == "Interface":
+        plt.plot(log_radii, log_surface_areas, color="red")
+    '''
+
+    # calculate the slope of graph & roughness
+    slope = np.polyfit(log_radii, log_surface_areas, 1)[0]
+    roughness = 2 - slope
+
     return roughness
 
 
@@ -156,68 +149,59 @@ def calculate_planarity_by_patch(patch):
     # get the coordinates of the atoms in patch
     coords = []
     for residue in patch:
-        coords.extend(atom.coord for atom in residue if atom.element != "H")
+        coords.extend(atom.coord for atom in residue.residue if atom.element != "H")
     coords = np.array(coords)
 
     # center the coordinates by subtracting the mean
     coords = coords - coords.mean(axis=0)
 
-    # calculate the singular value decomposition of the centered coordinates
-    u, s, v = np.linalg.svd(coords)
+    # calculate the PCA of the centered coordinates
+    pca = PCA(n_components=3)
+    pca.fit(coords)
 
-    # the third principal component is the normal vector to the plane of best fit (defined by the first & second PCs)
-    normal = v[2]
+    # the first two principal components define the plane of best fit, so the normal vector is the cross product
+    normal = np.cross(pca.components_[0], pca.components_[1])
 
     # calculate the distance of each point from the plane
     distances = np.abs(np.dot(coords, normal))
 
-    # calculate the root mean squared distance & return planarity (higher = flatter)
-    rmsd = sqrt(np.mean(distances ** 2))
+    # calculate the root mean squared distance & return planarity (higher = more planar/flat)
+    rmsd = sqrt(mean(distances ** 2))
     return 1 / rmsd
 
 
-def calculate_asa_by_patch(domain):
+def calculate_asa_by_patch(patch):
     # Calculate mean ASA for the domain
     asa_sum = 0
-    n_atom = 0
-    domain_atoms = get_domain_atoms(domain)
-    for atom in domain_atoms:
-        asa_sum += atom.sasa
-        n_atom += 1
-    return asa_sum / n_atom
+    for residue in patch:
+        asa_sum += residue.residue.sasa
+    return asa_sum / len(patch)
 
 
 def calculate_hydrophobicity_by_patch(patch):
     hydrophobicity_sum = 0
-    n_atom = 0
-    chain_id = patch[0].get_parent().id
     for residue in patch:
-        res_index = surface_residues.index(residue)
-        hydrophobicity_sum += res_hydrophobicity[res_index]
-        n_atom += 1
-    return hydrophobicity_sum / n_atom
+        hydrophobicity_sum += residue.hydrophobicity
+    return hydrophobicity_sum / len(patch)
 
 
-# Calculate the mean cx value for a given domain
-def calculate_cx_by_domain(domain):
+def calculate_cx_by_patch(patch):
+    cx_sum = 0
+    n_residue = 0
+    for residue in patch:
+        cx_sum += residue.cx
+        n_residue += 1
+    return cx_sum / n_residue
+
+
+def calculate_residue_cx(residue):
     cx_sum = 0
     n_atom = 0
-    domain_atoms = get_domain_atoms(domain)
-    for atom in domain_atoms:
+    for atom in residue:
         if atom.element != "H":
             cx_sum += atom.get_bfactor()
             n_atom += 1
     return cx_sum / n_atom
-
-
-# Check if domain is a patch, get domain atoms
-def get_domain_atoms(domain):
-    if not isinstance(domain, list):
-        return domain.get_atoms()
-    domain_atoms = []
-    for residue in domain:
-        domain_atoms.extend(iter(residue.get_list()))
-    return domain_atoms
 
 
 # get the solvent vector of a residue
@@ -228,8 +212,9 @@ def get_sv(residue, chain):
 
     # Find the 10 nearest neighbors of the central residue
     ns = NeighborSearch(list(chain.get_atoms()))
-    near = ns.search(cr_coord, 10, level="A")  # radius = 10 Angstroms
-    near = [atom for atom in near if atom.id == "CA" and atom.get_parent() != residue]  # only get CA atoms of residues
+    near = ns.search(cr_coord, 6, level="R")
+    for residue in near:
+        near[near.index(residue)] = residue["CA"]
     near.sort(key=lambda a: a - cr)  # sort near atoms by distance from central residue
     nn = near[:10]  # get the nearest 10
 
@@ -255,77 +240,182 @@ def get_sv(residue, chain):
 
 
 # Check if two residues are surface neighbors
-def check_neighbor(r1, r2, chain, radius):
-    ca1 = r1["CA"]
-    ca2 = r2["CA"]
-    distance = ca1 - ca2
-    if distance < radius:
-        # get the solvent vectors of the residues & calculate the angle between them
-        sv1 = get_sv(r1, chain)
-        sv2 = get_sv(r2, chain)
-        solvent_angle = sv1.angle(sv2)
+def check_neighbor(r1, r2, chain):
+    # get the solvent vectors of the residues & calculate the angle between them
+    sv1 = get_sv(r1, chain)
+    sv2 = get_sv(r2, chain)
+    solvent_angle = sv1.angle(sv2)
 
-        # return true if the angle between the solvent vectors is less than 110 degrees
-        return solvent_angle < radians(110)
-    return False
+    # return true if the angle between the solvent vectors is less than 110 degrees
+    return solvent_angle < radians(110)
 
 
 def get_patches_from_residues(residues_by_chain, patch_type):
     sr = ShrakeRupley()
     patch_index = 1
     for chain in residues_by_chain:
+        # create new patch lists for this chain
+        if chain not in surface_patches_by_chain:
+            surface_patches_by_chain[chain] = []
+            interface_patches_by_chain[chain] = []
+
+        potential_neighbors = residues_by_chain[chain]
+        potential_neighbor_residues = []
+        for residue in potential_neighbors:
+            potential_neighbor_residues.append(residue.residue)
+
         # calculate ASA before complexation
         sr.compute(chain, level="R")
         chain_id = chain.id
-        potential_neighbors = residues_by_chain[chain]
-        for i in range(0, len(potential_neighbors), 3):
+
+        potential_neighbor_atoms = []
+        for residue in potential_neighbor_residues:
+            potential_neighbor_atoms.extend(list(residue.get_atoms()))
+        ns = NeighborSearch(potential_neighbor_atoms)
+        for i in range(0, len(potential_neighbors), central_residue_step):
             # add residues to this patch
             this_res = potential_neighbors[i]
             this_patch = [this_res]
-            for other in potential_neighbors:
-                if other != this_res and check_neighbor(this_res, other, chain, patch_radius):
-                    this_patch.append(other)
+            this_neighbors = ns.search(this_res.residue["CA"].coord, patch_radius, level="R")
+            this_neighbors.remove(this_res.residue)
+            for other in this_neighbors:
+                if check_neighbor(this_res.residue, other, chain):
+                    # find other as a Residue object in potential_neighbor_residues
+                    for j in range(len(potential_neighbors)):
+                        if other == potential_neighbors[j].residue:
+                            this_patch.append(potential_neighbors[j])
+                            break
 
-            # set global patch info
+            # create new patch object:
+            patch = Patch(
+                this_patch,
+                chain_id,
+                patch_index,
+                patch_type,
+                calculate_cx_by_patch(this_patch),
+                calculate_asa_by_patch(this_patch),
+                calculate_hydrophobicity_by_patch(this_patch),
+                calculate_planarity_by_patch(this_patch),
+                calculate_roughness_by_patch(this_patch, patch_type)
+            )
+            all_patches.append(patch)
             if patch_type == "Surface":
-                surface_patches.append(this_patch)
+                surface_patches_by_chain[chain].append(patch)
             elif patch_type == "Interface":
-                interface_patches.append(this_patch)
-            all_patches.append(this_patch)
-            patch_chains.append(chain_id)
-            patch_nums.append(patch_index)
-            patch_types.append(patch_type)
-            patch_cx.append(calculate_cx_by_domain(this_patch))
-            patch_asa.append(calculate_asa_by_patch(this_patch))
-            patch_hydrophobicity.append(calculate_hydrophobicity_by_patch(this_patch))
-            patch_planarity.append(calculate_planarity_by_patch(this_patch))
-            patch_roughness.append(calculate_roughness_by_patch(this_patch))
+                interface_patches_by_chain[chain].append(patch)
 
             patch_index += 1
         patch_index = 1
 
 
-# Categorize patches of a given structure
-def categorize_patches(structure):
-    # Get patches from surface & interface residues by chain
+def purify_patch_residues(patch_list):
+    patch_residues = []
+    for patch in patch_list:
+        for residue in patch.residues:
+            if residue not in patch_residues:
+                patch_residues.append(residue)
+    return patch_residues
+
+
+def categorize_patches():
+    # Get patches from surface residues by chain
     get_patches_from_residues(surface_residues_by_chain, "Surface")
+    for chain in surface_patches_by_chain:
+        surface_patches_residues_by_chain[chain] = []
+        for residue in purify_patch_residues(surface_patches_by_chain[chain]):
+            surface_patches_residues_by_chain[chain].append(residue)
+
+    # Get patches from interface residues by chain
     get_patches_from_residues(interface_residues_by_chain, "Interface")
+    for chain in interface_patches_by_chain:
+        interface_patches_residues_by_chain[chain] = []
+        for residue in purify_patch_residues(interface_patches_by_chain[chain]):
+            interface_patches_residues_by_chain[chain].append(residue)
 
 
-def res_to_df():
+def res_to_df(protein_id, out_dir):
+    res_chains = []
+    res_nums = []
+    res_types = []
+    res_cx = []
+    res_rasa = []
+    res_surface = []
+    res_hydrophobicity = []
+    for residue in all_residues:
+        res_chains.append(residue.chain_id)
+        res_nums.append(residue.number)
+        res_types.append(residue.name)
+        res_cx.append(residue.cx)
+        res_rasa.append(residue.rasa)
+        res_surface.append(residue.surface)
+        res_hydrophobicity.append(residue.hydrophobicity)
+
     res_df = pd.DataFrame({
         'Chain': res_chains,
         'Number': res_nums,
         'Type': res_types,
         'CX': res_cx,
-        'rASA': res_rasa,
+        'RASA': res_rasa,
         'Surface': res_surface,
         'Hydrophobicity': res_hydrophobicity
     })
-    return res_df.sort_values(by=['Chain', 'Number'])
+    res_df.sort_values(by=['Chain', 'Number']).to_csv(f"{out_dir}/{protein_id}_residues.csv", index=False)
 
 
-def patches_to_df():
+def save_to_scatter_plot(x_values_s, y_values_s, x_values_i, y_values_i, out_dir, file_name, x_label, y_label, title):
+    plt.scatter(x_values_s, y_values_s, label="Surface")
+    plt.scatter(x_values_i, y_values_i, label="Interface")
+
+    plt.xlabel(x_label)
+    plt.ylabel(y_label)
+    plt.title(title)
+    plt.legend()
+
+    plt.savefig(f"{out_dir}/{file_name}.png")
+    plt.clf()
+
+
+def save_to_bar_chart(x_groups, y_1_values, y_2_values, out_dir, file_name, x_label, y_label, y_1_label, y_2_label, title):
+    x_axis = np.arange(len(x_groups))
+    plt.bar(x_axis - 0.2, y_1_values, 0.4, label=y_1_label)
+    plt.bar(x_axis + 0.2, y_2_values, 0.4, label=y_2_label)
+
+    plt.xticks(x_axis, x_groups)
+    plt.xlabel(x_label)
+    plt.ylabel(y_label)
+    plt.title(title)
+    plt.legend()
+
+    plt.savefig(f"{out_dir}/{file_name}.png")
+    plt.clf()
+
+
+def patches_to_data(structure, protein_id, out_dir):
+    # get patch values
+    patch_chains = []
+    patch_nums = []
+    patch_types = []
+    patch_cx = []
+    patch_asa = []
+    patch_hydrophobicity = []
+    patch_planarity = []
+    patch_roughness = []
+    for patch in all_patches:
+        patch_chains.append(patch.chain_id)
+        patch_nums.append(patch.number)
+        patch_types.append(patch.patch_type)
+        patch_cx.append(patch.cx)
+        patch_asa.append(patch.asa)
+        patch_hydrophobicity.append(patch.hydrophobicity)
+        patch_planarity.append(patch.planarity)
+        patch_roughness.append(patch.roughness)
+
+    # save patch values to pdb
+    save_structure_to_pdb(set_as_bfactor(structure, patch_hydrophobicity), out_dir, f"{protein_id}_hydrophobicity")
+    save_structure_to_pdb(set_as_bfactor(structure, patch_planarity), out_dir, f"{protein_id}_planarity")
+    save_structure_to_pdb(set_as_bfactor(structure, patch_roughness), out_dir, f"{protein_id}_roughness")
+
+    # save patch values to csv
     patches_df = pd.DataFrame({
         'Chain': patch_chains,
         'Number': patch_nums,
@@ -336,7 +426,14 @@ def patches_to_df():
         'Planarity': patch_planarity,
         'Roughness': patch_roughness
     })
-    return patches_df.sort_values(by=['Chain', 'Type', 'Number'])
+    patches_df.sort_values(by=['Chain', 'Type', 'Number']).to_csv(f"{out_dir}/{protein_id}_patches.csv", index=False)
+
+
+def remove_interior_res(structure):
+    for chain in interior_residues_by_chain:
+        for residue in interior_residues_by_chain[chain]:
+            structure[0][chain.id].detach_child(residue.residue.id)
+    return structure
 
 
 def get_interface_res(structure):
@@ -346,7 +443,7 @@ def get_interface_res(structure):
     for chain in surface_residues_by_chain:
         asa_before[chain] = []
         for residue in surface_residues_by_chain[chain]:
-            asa_before[chain].append(residue.sasa)
+            asa_before[chain].append(residue.residue.sasa)
 
     # Get ASA after complexation
     sr = ShrakeRupley()
@@ -354,61 +451,95 @@ def get_interface_res(structure):
     for chain in surface_residues_by_chain:
         asa_after[chain] = []
         for residue in surface_residues_by_chain[chain]:
-            asa_after[chain].append(residue.sasa)
+            asa_after[chain].append(residue.residue.sasa)
 
-    # Find interface residues by ASA difference
+    # find interface residues by ASA difference
     for chain in surface_residues_by_chain:
         for i in range(len(surface_residues_by_chain[chain])):
             asa_diff = asa_after[chain][i] - asa_before[chain][i]
             if asa_diff < -1:
                 interface_residues_by_chain[chain].append(surface_residues_by_chain[chain][i])
 
+    # remove all interface residues from surface residues
+    for chain in interface_residues_by_chain:
+        for residue in interface_residues_by_chain[chain]:
+            surface_residues_by_chain[chain].remove(residue)
+
 
 def categorize_residues(structure):
-    asa_before_by_chain = {}
     for chain in structure.get_chains():
         if chain not in surface_residues_by_chain:
             surface_residues_by_chain[chain] = []
             interface_residues_by_chain[chain] = []
+            interior_residues_by_chain[chain] = []
         chain_id = chain.id
 
         # get ASA before complexation
         sr = ShrakeRupley()
         sr.compute(chain, level="R")
-        asa_before_by_chain[chain_id] = [residue.sasa for residue in chain.get_residues()]
+
+        # get chain residues
         chain_res = list(chain.get_residues())
         for i in range(len(chain_res)):
             # get residue info
             residue = chain_res[i]
             residue_num = residue.get_full_id()[3][1]
             residue_type = residue.get_resname()
-            residue_rasa = asa_before_by_chain[chain_id][i] / residue_max_asas[residue_type]
-            residue_cx = calculate_cx_by_domain(residue)
+            residue_rasa = residue.sasa / residue_max_asas[residue_type]
+            residue_cx = calculate_residue_cx(residue)
             residue_hydrophobicity = residue_hydrophobicities[residue_type]
-
-            # get surface residues
             residue_surface = residue_rasa >= 0.25
 
-            # set global residue info if surface residue
-            surface_residues.append(residue)
-            surface_residues_by_chain[chain].append(residue)
-            res_chains.append(chain_id)
-            res_nums.append(residue_num)
-            res_types.append(residue_type)
-            res_cx.append(residue_cx)
-            res_rasa.append(residue_rasa)
-            res_surface.append(residue_surface)
-            res_hydrophobicity.append(residue_hydrophobicity)
-    get_interface_res(structure)
+            '''
+            # if residue rasa = 0, remove from structure
+            if residue_rasa == 0:
+                structure[0][chain_id].detach_child(residue.id)
+                continue
+            '''
+
+            # create residue object & add to global list
+            res = Residue(
+                residue,
+                residue_type,
+                chain_id,
+                residue_num,
+                residue_cx,
+                residue_rasa,
+                residue_surface,
+                residue_hydrophobicity
+            )
+            all_residues.append(res)
+            if residue_rasa == 0:
+                interior_residues_by_chain[chain].append(res)
+            else:
+                surface_residues_by_chain[chain].append(res)
 
 
 def set_as_bfactor(structure, values):
     for i in range(len(all_patches)):
         patch = all_patches[i]
-        for residue in patch:
-            for atom in residue.get_list():
+        for residue in patch.residues:
+            for atom in residue.residue:
                 if atom.element != "H":
                     atom.set_bfactor(values[i])
+    return structure
+
+
+def remove_rogue_residues(structure):
+    for i in range(len(all_patches)):
+        patch = all_patches[i]
+        for residue in patch.residues:
+            for atom in residue.residue:
+                if atom.element != "H":
+                    atom.set_bfactor(1)
+    rogue_residues = 0
+    for chain in structure.get_chains():
+        for residue in chain.get_residues():
+            first_atom = list(residue.get_atoms())[0]
+            if first_atom.get_bfactor() == 0:
+                chain.detach_child(residue.id)
+                rogue_residues += 1
+    print(f"Removed {rogue_residues} rogue residues")
     return structure
 
 
@@ -416,31 +547,21 @@ def set_ip_as_bfactor(structure):
     for atom in structure.get_atoms():
         if atom.element != "H":
             atom.set_bfactor(0)
-    for patch in interface_patches:
-        for residue in patch:
-            for atom in residue.get_list():
-                if atom.element != "H":
-                    atom.set_bfactor(1)
-    return structure
-
-
-def set_hydrophobicity_as_bfactor(structure):
-    for i in range(len(all_patches)):
-        patch = all_patches[i]
-        h = patch_hydrophobicity[i]
-        for residue in patch:
-            for atom in residue.get_list():
-                if atom.element != "H":
-                    atom.set_bfactor(h)
+    for chain in interface_patches_by_chain:
+        for patch in interface_patches_by_chain[chain]:
+            for residue in patch.residues:
+                for atom in residue.residue:
+                    if atom.element != "H":
+                        atom.set_bfactor(1)
     return structure
 
 
 def set_cx_as_bfactor(structure):
     for chain in structure.get_chains():
         ns = NeighborSearch(list(chain.get_atoms()))
-        for residue in chain.get_list():
+        for residue in chain:
             residue_name = residue.get_resname()
-            for atom in residue.get_list():
+            for atom in residue:
                 v_int = 0
                 if atom.element != "H":
                     neighbors = ns.search(atom.get_coord(), cx_radius, level='A')
@@ -469,23 +590,13 @@ def get_protein_from_pdb(pdb_file):
 
 
 def clear_global_variables():
-    global surface_residues, res_chains, res_nums, res_types, res_cx, res_rasa, res_surface, res_hydrophobicity
-    global all_patches, surface_patches, interface_patches, patch_chains, patch_nums, patch_types, patch_cx, patch_asa, patch_hydrophobicity, patch_planarity, patch_roughness
-    surface_residues, res_chains, res_nums, res_types, res_cx, res_rasa, res_surface, res_hydrophobicity = [], [], [], [], [], [], [], []
-    all_patches, surface_patches, interface_patches, patch_chains, patch_nums, patch_types, patch_cx, patch_asa, patch_hydrophobicity, patch_planarity, patch_roughness = [], [], [], [], [], [], [], [], [], [], []
-    global surface_residues_by_chain, interface_residues_by_chain
-    surface_residues_by_chain, interface_residues_by_chain = {}, {}
+    global all_patches, all_residues
+    all_patches, all_residues = [], []
+    global surface_residues_by_chain, interface_residues_by_chain, interior_residues_by_chain, surface_patches_by_chain, interface_patches_by_chain, surface_patches_residues_by_chain, interface_patches_residues_by_chain
+    surface_residues_by_chain, interface_residues_by_chain, interior_residues_by_chain, surface_patches_by_chain, interface_patches_by_chain, surface_patches_residues_by_chain, interface_patches_residues_by_chain = {}, {}, {}, {}, {}, {}, {}
 
 
-def get_all_bfactors(structure):
-    bfactors = []
-    for atom in structure.get_atoms():
-        if atom.element != "H":
-            bfactors.append(atom.get_bfactor())
-    return bfactors
-
-
-def main():  # sourcery skip: sum-comprehension
+def main():
     for file in os.listdir("in"):
         if file.endswith(".pdb"):
             # get pdb file
@@ -517,46 +628,109 @@ def main():  # sourcery skip: sum-comprehension
 
             # categorize residues as surface, interface & non-surface
             categorize_residues(structure)
+            get_interface_res(structure)
 
-            # categorize patches as interface & surface
-            categorize_patches(structure)
+            # categorize patches as interface, surface, interior
+            categorize_patches()
+
+            # remove interior residues (rASA = 0)
+            structure = remove_interior_res(structure)
+
+            '''
+            # plot the patches' roughness plot
+            plt.title(f"{protein_id} - interface & surface patch roughness")
+            plt.xlabel("log(radius) (Angstrom)")
+            plt.ylabel("log(surface area) (Angstrom^2)")
+            plt.savefig(f"out/{protein_id}/patch roughness.png")
+            plt.clf()
+            '''
 
             # set interface patches as b-factor & save structure to pdb
             save_structure_to_pdb(set_ip_as_bfactor(structure), out_dir, f"{protein_id}_ip")
 
-            bfactors_old = get_all_bfactors(structure)
+            # remove rogue residues
+            structure = remove_rogue_residues(structure)
 
-            # set hydrophobicity, planarity & roughness values of patches as b-factor & save structure to pdb
-            save_structure_to_pdb(set_hydrophobicity_as_bfactor(structure), out_dir, f"{protein_id}_hydrophobicity")
-            save_structure_to_pdb(set_as_bfactor(structure, patch_planarity), out_dir, f"{protein_id}_planarity")
-            save_structure_to_pdb(set_as_bfactor(structure, patch_roughness), out_dir, f"{protein_id}_roughness")
+            # save global residue info
+            res_to_df(protein_id, out_dir)
 
-            bfactors_new = get_all_bfactors(structure)
+            # save global patch info
+            patches_to_data(structure, protein_id, out_dir)
 
-            # save global residue info to csv
-            res_to_df().to_csv(f"{out_dir}/{protein_id}_residues.csv", index=False)
+            # get patch data to graph
+            interface_roughness = []
+            interface_planarity = []
+            interface_asa = []
+            interface_cx = []
+            interface_hydrophobicity = []
+            for patch in interface_patches_by_chain[next(iter(interface_patches_by_chain))]:
+                interface_hydrophobicity.append(patch.hydrophobicity)
+                interface_cx.append(patch.cx)
+                interface_asa.append(patch.asa)
+                interface_planarity.append(patch.planarity)
+                interface_roughness.append(patch.roughness)
+            surface_roughness = []
+            surface_planarity = []
+            surface_asa = []
+            surface_cx = []
+            surface_hydrophobicity = []
+            for patch in surface_patches_by_chain[next(iter(surface_patches_by_chain))]:
+                surface_hydrophobicity.append(patch.hydrophobicity)
+                surface_cx.append(patch.cx)
+                surface_asa.append(patch.asa)
+                surface_planarity.append(patch.planarity)
+                surface_roughness.append(patch.roughness)
 
-            # save global patch info to csv
-            patches_to_df().to_csv(f"{out_dir}/{protein_id}_patches.csv", index=False)
+            # graph planarity vs roughness
+            save_to_scatter_plot(surface_planarity, surface_roughness, interface_planarity, interface_roughness, out_dir, "planarity_vs_roughness", "Planarity (higher = more planar)", "Roughness (higher = smoother)", f"{protein_id} - planarity vs roughness")
+
+            # graph asa vs cx
+            save_to_bar_chart(["CX", "Planarity", "Roughness"], [mean(surface_cx), mean(surface_planarity), mean(surface_roughness)], [mean(interface_cx), mean(interface_planarity), mean(interface_roughness)], out_dir, "patch features", "", "", "Surface", "Interface", f"{protein_id} - surface vs interface patches")
 
             # get time of execution & print
             end_time = time.time()
             print(f"{protein_id} - processed in: {round(end_time - start_time, 2)} seconds")
 
             # print the total number of residues in structure and residues in patches
-            print(f"#surface residues in structure: {len(surface_residues)}")
-            res = sum(len(patch) for patch in surface_patches)
-            print(f"#residues in surface patches: {res}")
-
-            # compare old and new b-factors
-            same = 0
-            for i in range(len(bfactors_old)):
-                if bfactors_old[i] == bfactors_new[i]:
-                    same += 1
-            print(f"atoms not present in patches: {same}\n")
+            surface_res = sum(len(res) for res in surface_residues_by_chain.values())
+            interface_res = sum(len(res) for res in interface_residues_by_chain.values())
+            print(f"#total surface:interface residues in structure: {surface_res}:{interface_res}")
+            surface_patches_res = 0
+            for chain in surface_patches_by_chain:
+                surface_patches_res += sum(len(patch.residues) for patch in surface_patches_by_chain[chain])
+            interface_patches_res = 0
+            for chain in interface_patches_by_chain:
+                interface_patches_res += sum(len(patch.residues) for patch in interface_patches_by_chain[chain])
+            print(f"#total residues in surface:interface patches: {surface_patches_res}:{interface_patches_res}")
 
             # clear global variables for the next structure
             clear_global_variables()
+            print()
+
+
+class Residue:
+    def __init__(self, residue, name, chain_id, number, cx, rasa, surface, hydrophobicity):
+        self.residue = residue
+        self.name = name
+        self.chain_id = chain_id
+        self.number = number
+        self.cx = cx
+        self.rasa = rasa
+        self.surface = surface
+        self.hydrophobicity = hydrophobicity
+
+
+class Patch:
+    def __init__(self, residues, chain_id, number, patch_type, cx, asa, hydrophobicity, planarity, roughness):
+        self.residues = residues
+        self.chain_id = chain_id
+        self.number = number
+        self.patch_type = patch_type
+        self.cx = cx
+        self.asa = asa
+        self.hydrophobicity = hydrophobicity
+        self.planarity = planarity
+        self.roughness = roughness
 
 
 if __name__ == "__main__":
