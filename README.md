@@ -1,27 +1,16 @@
 # Protein Surface and Interface Patch Analysis Pipeline
 
-## Overview
-This repository presents an advanced computational framework for the rigorous analysis of protein surface topology, residue exposure, and interfacial patch characteristics from high‑resolution PDB structures. Combining state‑of‑the‑art molecular surface algorithms, geometric feature extraction, and machine learning, our pipeline delivers comprehensive descriptors for per‑residue and per‑patch properties, facilitating downstream statistical modeling and predictive tasks in structural bioinformatics.
+A Python script for the analysis of protein surface topology, residue exposure, and interfacial patch characteristics from high‑resolution PDB structures using molecular surface algorithms, geometric feature extraction, and machine learning. This pipeline delivers comprehensive descriptors for per‑residue and per‑patch properties, allowing for statistical modeling and predictive tasks in structural bioinformatics.
 
-Key capabilities:
+Key Features:
 - Automated cleaning of input PDB files (removal of non‑canonical ligands and HETATM records) via `cleaner.py`.
 - Computation of **Convexity Index (CX)** per residue by volumetric sphere sampling.
 - Shrake–Rupley solvent accessible surface area (SASA) profiling over variable probe radii (0.2–2.0 Å) for fractal **roughness** estimation.
 - Principal Component Analysis (PCA)‑based **planarity** quantification of spatial residue patches.
 - Classification of residues into **surface**, **interface**, and **interior** based on relative ASA thresholds and interface burial upon complexation.
 - Spatial clustering of residues into **patches** (neighbors within 11 Å filtered by solvent‑vector angles < 110°) and computation of per‑patch descriptors: CX, mean ASA, hydrophobicity, planarity, and roughness.
-- Generation of publication‑quality PDB outputs with per‑atom B‑factors encoding computed metrics and CSV summaries of residues and patches.
-- A PyTorch‑based multilayer perceptron (MLP) for binary classification of surface vs. interface patches, trained on aggregated per‑patch feature sets.
-
-## Repository Structure
-```
-├── cleaner.py                 # PDB cleaning utility
-├── main.py                    # Core analysis pipeline
-├── train_patch_classifier.py  # PyTorch MLP training script
-├── README.md                  # This documentation
-├── in/                        # Input PDB files
-└── out/                       # Per‑protein output directories
-```
+- Generation of PDB outputs with per‑atom B‑factors encoding computed metrics and CSV summaries of residues and patches.
+- PyTorch‑based multilayer perceptron (MLP) for binary classification of surface vs. interface patches, trained on aggregated per‑patch feature sets.
 
 ## Installation
 1. Clone this repository:
@@ -91,16 +80,5 @@ For each protein `{protein_id}` in `out/{protein_id}/`:
 - `{protein_id}_patches.csv` — per‑patch features
 - Visualizations: `*.png` plots of SASA, roughness, planarity, CX, etc.
 
-## Experimental Results
-Preliminary benchmarking on a diverse set of membrane and soluble proteins demonstrates clear discriminative power of fractal roughness and CX in demarcating surface vs. interface patches, achieving >85% classification accuracy with a simple MLP.
-
-## Future Directions
-- Integrate Graph Neural Networks on residue‐contact graphs for end‑to‑end patch classification.
-- Extend roughness analysis to anisotropic probe scanning.
-- Correlate patch descriptors with functional annotation (e.g., protein–protein interaction hot spots).
-
-## References
-1. Shrake, A., & Rupley, J. A. (1973). Environment and exposure to solvent of protein atoms. _Journal of Molecular Biology_, 79(2), 351–371.
-2. Jolliffe, I. T. (2002). Principal Component Analysis. _Springer Series in Statistics_.
-3. Mandelbrot, B. B. (1983). The fractal geometry of nature. _W. H. Freeman_.
-4. Kingma, D. P., & Ba, J. (2014). Adam: A Method for Stochastic Optimization. arXiv:1412.6980.
+## Results
+Preliminary benchmarking on a diverse set of membrane and soluble proteins demonstrates clear discriminative power of fractal roughness and CX in demarcating surface vs. interface patches, achieving >80% classification accuracy with a simple MLP.
