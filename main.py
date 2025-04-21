@@ -1,4 +1,3 @@
-import math
 import os
 import time
 import numpy as np
@@ -725,3 +724,4 @@ class Patch:
 
 if __name__ == "__main__":
     main()
+
