@@ -57,7 +57,7 @@ For each atom, internal volume `V_int` is summed over atom type–specific van d
 Shrake–Rupley algorithm computes residue SASA at probe radii from 0.2 to 2.0 Å. Log–log linear regression of surface area vs. radius yields a slope `m`, and roughness `D_f = 2 – m`, approximating the fractal dimension of the surface patch.
 
 ### Planarity via PCA
-Atomic coordinates of a residue patch are mean‑centered and decomposed into principal components. The inverse root‑mean‑square deviation of points from the best‑fit plane (defined by the first two PCs) quantifies flatness.
+Atomic coordinates of a residue patch are mean‑centered and decomposed into principal components. The inverse root‑mean‑square deviation of points from the best‑fit plane (defined by the first two PCs) quantifies "flatness."
 
 ### Residue & Patch Classification
 - **Surface residues**: relative ASA ≥ 25%.
@@ -71,7 +71,7 @@ For each protein `{protein_id}` in `out/{protein_id}/`:
 - `{protein_id}_hydrophobicity.pdb`, `_planarity.pdb`, `_roughness.pdb` — patches encoded in B‑factors
 - `{protein_id}_residues.csv` — per‑residue features
 - `{protein_id}_patches.csv` — per‑patch features
-- Visualizations: `*.png` plots of SASA, roughness, planarity, CX, etc.
+- Visualizations: `.png` plots of SASA, roughness, planarity, CX, etc.
 
 ## Results
 Preliminary benchmarking on a diverse set of membrane and soluble proteins demonstrates clear discriminative power of fractal roughness and CX in demarcating surface vs. interface patches, achieving >78% classification accuracy with a simple MLP.
