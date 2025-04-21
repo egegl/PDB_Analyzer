@@ -2,11 +2,11 @@
 
 A Python script for the analysis of protein surface topology, residue exposure, and interfacial patch characteristics from high‑resolution PDB structures using molecular surface algorithms, geometric feature extraction, and machine learning. This pipeline delivers comprehensive descriptors for per‑residue and per‑patch properties, allowing for statistical modeling and predictive tasks in structural bioinformatics. Key features include:
 - Automated cleaning of input PDB files (removal of non‑canonical ligands and HETATM records) via `cleaner.py`.
-- Computation of **Convexity Index (CX)** per residue by volumetric sphere sampling.
-- Shrake–Rupley solvent accessible surface area (SASA) profiling over variable probe radii (0.2–2.0 Å) for fractal **roughness** estimation.
-- Principal Component Analysis (PCA)‑based **planarity** quantification of spatial residue patches.
-- Classification of residues into **surface**, **interface**, and **interior** based on relative ASA thresholds and interface burial upon complexation.
-- Spatial clustering of residues into **patches** (neighbors within 11 Å filtered by solvent‑vector angles < 110°) and computation of per‑patch descriptors: CX, mean ASA, hydrophobicity, planarity, and roughness.
+- Computation of Convexity Index (CX) per residue by volumetric sphere sampling.
+- Shrake–Rupley solvent accessible surface area (SASA) profiling over variable probe radii (0.2–2.0 Å) for fractal roughness estimation.
+- Principal Component Analysis (PCA)‑based planarity quantification of spatial residue patches.
+- Classification of residues into surface, interface, and interior based on relative ASA thresholds and interface burial upon complexation.
+- Spatial clustering of residues into patches (neighbors within 11 Å filtered by solvent‑vector angles < 110°) and computation of per‑patch descriptors: CX, mean ASA, hydrophobicity, planarity, and roughness.
 - Generation of PDB outputs with per‑atom B‑factors encoding computed metrics and CSV summaries of residues and patches.
 - PyTorch‑based multilayer perceptron (MLP) for binary classification of surface vs. interface patches, trained on aggregated per‑patch feature sets.
 
