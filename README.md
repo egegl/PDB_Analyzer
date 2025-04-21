@@ -29,12 +29,11 @@ Key Features:
 - Place target PDB files (with extension `.pdb`) into the `in/` directory.
 
 ### 2. Running the Analysis Pipeline
-Execute the main script to process all inputs:
 ```bash
 python main.py
 ```
-This will:
-- Clean each PDB (removing extraneous HETATM records).
+Running main.py will:
+- "Clean" each PDB (removing extraneous HETATM records).
 - Compute residue‐level CX and write `{protein_id}_cx.pdb` in `out/{protein_id}/`.
 - Classify residues (surface, interface, interior).
 - Identify and characterize patches, generating:
@@ -44,7 +43,6 @@ This will:
   - High‑resolution plots (`*.png`) of SASA vs. probe radius and bar‑charts comparing surface/interface patch metrics.
 
 ### 3. Training a Patch Classifier
-Aggregate patch descriptors across proteins and train a binary classifier:
 ```bash
 python train_patch_classifier.py --data-dir out --epochs 100 --batch-size 32 --lr 1e-3
 ```
@@ -53,9 +51,6 @@ Outputs:
 - Console logs of training loss, accuracy per epoch, and final test accuracy.
 
 ## Methodology
-
-### Structure Cleaning
-Removes non‑canonical HETATM entries while preserving essential polypeptide residues, ensuring unbiased geometric analysis.
 
 ### Convexity Index (CX)
 For each atom, internal volume `V_int` is summed over atom type–specific van der Waals volumes within a sphere (10 Å radius), with external volume `V_ext = V_sphere – V_int`. Residue CX is averaged atom‑level `V_ext / V_int`.
@@ -81,4 +76,4 @@ For each protein `{protein_id}` in `out/{protein_id}/`:
 - Visualizations: `*.png` plots of SASA, roughness, planarity, CX, etc.
 
 ## Results
-Preliminary benchmarking on a diverse set of membrane and soluble proteins demonstrates clear discriminative power of fractal roughness and CX in demarcating surface vs. interface patches, achieving >80% classification accuracy with a simple MLP.
+Preliminary benchmarking on a diverse set of membrane and soluble proteins demonstrates clear discriminative power of fractal roughness and CX in demarcating surface vs. interface patches, achieving >75% classification accuracy with a simple MLP.
