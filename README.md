@@ -74,7 +74,7 @@ For each protein `{protein_id}` in `out/{protein_id}/`:
 - Visualizations: `*.png` plots of SASA, roughness, planarity, CX, etc.
 
 ## Results
-Preliminary benchmarking on a diverse set of membrane and soluble proteins demonstrates clear discriminative power of fractal roughness and CX in demarcating surface vs. interface patches, achieving >75% classification accuracy with a simple MLP.
+Preliminary benchmarking on a diverse set of membrane and soluble proteins demonstrates clear discriminative power of fractal roughness and CX in demarcating surface vs. interface patches, achieving >78% classification accuracy with a simple MLP.
 
 ---
 Developed under the supervision of [Professor Demet Akten](https://www.khas.edu.tr/en/academic-staff/63/) from Kadir Has University.
