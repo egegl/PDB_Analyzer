@@ -16,10 +16,7 @@ A Python script for the analysis of protein surface topology, residue exposure, 
    git clone https://github.com/egegl/PDB_Analyzer.git
    cd protein‑patch‑pipeline
    ```
-2. Create a Python 3.7+ virtual environment and install dependencies:
-   ```bash
-   pip install numpy pandas matplotlib scikit‑learn biopython torch
-   ```
+2. Create a Python 3.7+ virtual environment and install dependencies.
 
 ## Usage
 
