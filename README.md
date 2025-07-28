@@ -1,4 +1,4 @@
-# Protein Surface and Interface Patch Analysis Pipeline
+# Protein Surface and Interface Patch Analysis
 
 A Python script for the analysis of protein surface topology, residue exposure, and interfacial patch characteristics from high‑resolution PDB structures using molecular surface algorithms, geometric feature extraction, and machine learning. This pipeline delivers comprehensive descriptors for per‑residue and per‑patch properties, allowing for statistical modeling and predictive tasks in structural bioinformatics. Key features include:
 - Automated cleaning of input PDB files (removal of non‑canonical ligands and HETATM records) via `cleaner.py`.
