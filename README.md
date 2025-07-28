@@ -10,14 +10,6 @@ A Python script for the analysis of protein surface topology, residue exposure, 
 - Generation of PDB outputs with per‑atom B‑factors encoding computed metrics and CSV summaries of residues and patches.
 - PyTorch‑based multilayer perceptron (MLP) for binary classification of surface vs. interface patches, trained on aggregated per‑patch feature sets.
 
-## Installation
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/egegl/PDB_Analyzer.git
-   cd protein‑patch‑pipeline
-   ```
-2. Create a Python 3.7+ virtual environment and install dependencies.
-
 ## Usage
 
 ### 1. Input Preparation
