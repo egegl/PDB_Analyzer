@@ -55,15 +55,15 @@ Atomic coordinates of a residue patch are mean‑centered and decomposed into pr
 
 ## Outputs
 For each protein `{protein_id}` in `out/{protein_id}/`:
-- `{protein_id}_cx.pdb` — CX in B‑factors
-- `{protein_id}_ip.pdb` — interface map (B=0/1)
+- `{protein_id}_cx.pdb` - CX in B‑factors
+- `{protein_id}_ip.pdb` - interface map (B=0/1)
 - `{protein_id}_hydrophobicity.pdb`, `_planarity.pdb`, `_roughness.pdb` — patches encoded in B‑factors
-- `{protein_id}_residues.csv` — per‑residue features
-- `{protein_id}_patches.csv` — per‑patch features
-- Visualizations: `.png` plots of SASA, roughness, planarity, CX, etc.
+- `{protein_id}_residues.csv` - per‑residue features
+- `{protein_id}_patches.csv` - per‑patch features
+- Visualizations - `.png` plots of SASA, roughness, planarity, CX, etc.
 
 ## Results
-Preliminary benchmarking on a diverse set of membrane and soluble proteins demonstrates clear discriminative power of fractal roughness and CX in demarcating surface vs. interface patches, achieving >78% classification accuracy with a simple MLP.
+Preliminary benchmarking on a set of membrane and soluble proteins show clear discriminative power of fractal roughness and CX in demarcating surface vs. interface patches, achieving >78% classification accuracy with a simple MLP.
 
 ---
 Developed under the supervision of [Professor Demet Akten](https://www.khas.edu.tr/en/academic-staff/63/) from Kadir Has University.
